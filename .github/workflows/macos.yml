@@ -1,0 +1,250 @@
+# Build a safepoint SBCL, run the suite, build the bundle, check it from its
+# disk image, and keep the disk image -- on Apple silicon and on Intel.  A tag
+# v<version> makes a release of the two disk images.
+#
+# THE LIBRARY.  The gopher library is not in ocicl: it is checked out from
+# lispnik/gopher into ./gopher, and GOPHER_DIR points the Makefile at it.
+#
+# SIGNING.  Without secrets the application is signed ad hoc: it runs, and
+# macOS asks before opening it the first time.  With these repository secrets
+# it is signed with a Developer ID and the disk image notarised and stapled:
+#
+#   MACOS_CERTIFICATE_P12       the Developer ID Application certificate and
+#                               its key, exported as .p12, base64
+#   MACOS_CERTIFICATE_PASSWORD  the .p12's password
+#   MACOS_SIGNING_IDENTITY      "Developer ID Application: Name (TEAMID)"
+#   NOTARY_KEY_P8               an App Store Connect API key (.p8), base64
+#   NOTARY_KEY_ID               its key ID
+#   NOTARY_ISSUER               its issuer ID
+#
+# WHY SAFEPOINTS.  Fetches run on Lisp threads beside AppKit, and the bundle
+# ships the runtime of the SBCL that built it.  See lispnik/objc,
+# doc/sbcl-libdispatch-safepoint.md.
+#
+# STEP ORDER IS LOAD BEARING.  SBCL is built before ocicl is set up: an SBCL
+# contrib build calls UPGRADE-ASDF, and a source registry with any ASDF source
+# on it fails that build.
+
+name: macOS
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # A pinned release tag, never a branch: the cache key is made from it.
+  SBCL_TAG: sbcl-2.6.8
+  GOPHER_DIR: gopher
+
+jobs:
+  test:
+    name: sbcl --with-sb-safepoint · ${{ matrix.os }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            arch: arm64
+          - os: macos-26-intel
+            arch: x86-64
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Check out the gopher library
+        uses: actions/checkout@v7
+        with:
+          repository: lispnik/gopher
+          path: gopher
+
+      - name: A release tag is the version the application says
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(sed -n 's/.*:version "\(.*\)".*/\1/p' gopher-browser-app.asd | head -1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::the tag is $GITHUB_REF_NAME but gopher-browser-app.asd says version $version" >&2
+            exit 1
+          fi
+
+      - name: Settle on where the safepoint SBCL lives
+        # Outside the workspace: SBCL's sources must never be on the registry.
+        run: echo "SAFEPOINT_PREFIX=$HOME/sbcl-safepoint" >> "$GITHUB_ENV"
+
+      - name: Install a host SBCL and OpenSSL
+        # The host SBCL only compiles the real one.  OpenSSL is what cl+ssl
+        # loads, and what the bundle copies.
+        run: brew install sbcl openssl
+
+      - name: Cache the safepoint SBCL
+        id: sbcl-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/sbcl-safepoint
+          key: sbcl-safepoint-${{ runner.os }}-${{ runner.arch }}-${{ env.SBCL_TAG }}
+
+      - name: Build SBCL with safepoints
+        if: steps.sbcl-cache.outputs.cache-hit != 'true'
+        run: |
+          set -eux
+          git clone --depth 1 --branch "$SBCL_TAG" \
+            https://github.com/sbcl/sbcl.git "$RUNNER_TEMP/sbcl-src"
+          cd "$RUNNER_TEMP/sbcl-src"
+          ./make.sh --with-sb-safepoint --prefix="$SAFEPOINT_PREFIX"
+          INSTALL_ROOT="$SAFEPOINT_PREFIX" sh install.sh
+
+      - name: Verify the build really has safepoints
+        run: |
+          echo "SBCL_SAFEPOINT=$SAFEPOINT_PREFIX/bin/sbcl" >> "$GITHUB_ENV"
+          "$SAFEPOINT_PREFIX/bin/sbcl" --non-interactive --no-userinit --no-sysinit \
+            --eval '(format t "~&version: ~a~%safepoint: ~a~%" (lisp-implementation-version) (and (member :sb-safepoint *features*) t))' \
+            --eval '(sb-ext:exit :code (if (member :sb-safepoint *features*) 0 1))'
+
+      - name: Install ocicl
+        run: |
+          git clone --depth 1 https://github.com/ocicl/ocicl.git "$HOME/ocicl-src"
+          ( cd "$HOME/ocicl-src" && sbcl --non-interactive --load setup.lisp )
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Restore dependencies
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          ocicl setup
+          # ocicl exits 0 when a download fails: several attempts, and a
+          # failure here rather than a mystery later.
+          for attempt in 1 2 3 4 5; do
+            make deps 2>&1 | tee "$RUNNER_TEMP/ocicl-install.log" || true
+            if ! grep -q "failed to install" "$RUNNER_TEMP/ocicl-install.log"; then
+              break
+            fi
+            echo "::warning::ocicl install attempt $attempt did not get every package"
+            sleep 30
+          done
+          if grep -q "failed to install" "$RUNNER_TEMP/ocicl-install.log"; then
+            echo "::error::ocicl could not install every dependency after 5 attempts" >&2
+            exit 1
+          fi
+          echo "restored:" && ls ocicl
+
+      - name: Run the tests
+        # Real sockets, real TLS, and the real window driven without being
+        # shown.  macOS ships no timeout(1); perl's alarm stands in.
+        run: |
+          set -o pipefail
+          perl -e 'alarm shift; exec @ARGV' 1500 make test SBCL="$SBCL_SAFEPOINT" 2>&1 | tee test.log
+          # A suite that skipped its windowed tests is a green run of fewer
+          # checks.  Said out loud, not failed: a runner may have no display.
+          grep -E "^ +Skip: +[1-9]" test.log && echo "::warning::some tests were skipped; see the log" || true
+
+      - name: Set up a Developer ID, if there is one
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: |
+          if [ -z "$CERTIFICATE" ] || [ -z "$IDENTITY" ]; then
+            echo "no Developer ID: the application is signed ad hoc"
+            exit 0
+          fi
+          set -eu
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -hex 16)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+            -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          echo "MACOS_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Build the bundle and the disk image
+        run: |
+          set -eux
+          make dmg SBCL="$SBCL_SAFEPOINT"
+          plutil -lint build/Gopher.app/Contents/Info.plist
+          codesign --verify --deep --strict build/Gopher.app
+          ls build/Gopher.app/Contents/Frameworks | grep -q '^libssl'
+          echo "DMG=$(ls dist/*.dmg)" >> "$GITHUB_ENV"
+
+      - name: Notarise the disk image, if there is a Developer ID
+        env:
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: |
+          if [ -z "${MACOS_SIGNING_IDENTITY:-}" ] || [ -z "$NOTARY_KEY_P8" ]; then
+            echo "not notarised: there is no Developer ID or no notary key"
+            exit 0
+          fi
+          set -eu
+          echo "$NOTARY_KEY_P8" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          make notarize-dmg NOTARY_KEY="$RUNNER_TEMP/notary.p8" \
+            NOTARY_KEY_ID="$NOTARY_KEY_ID" NOTARY_ISSUER="$NOTARY_ISSUER"
+          rm -f "$RUNNER_TEMP/notary.p8"
+
+      - name: Check the disk image
+        # Mounted and run from, as a download would be: the browser in it
+        # shows a page from a Gopher server on the runner, on its own OpenSSL.
+        run: perl -e 'alarm shift; exec @ARGV' 300 tools/check-dmg.sh "$DMG"
+
+      - name: Keep the disk image
+        uses: actions/upload-artifact@v7
+        with:
+          name: dmg-${{ matrix.arch }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+      - name: Keep the test log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: logs-${{ matrix.arch }}
+          path: test.log
+          if-no-files-found: ignore
+
+  release:
+    name: Release the disk images
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Fetch the disk images
+        uses: actions/download-artifact@v8
+        with:
+          pattern: dmg-*
+          merge-multiple: true
+          path: dist
+
+      - name: Make the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eux
+          ls -l dist
+          test "$(ls dist/*.dmg | wc -l)" -eq 2
+          cat > notes.md <<'NOTES'
+          Gopher, a browser for Gopher, Gemini and the small web, for macOS.
+          Built by CI from this tag.
+
+          - **Apple silicon** (M1 and later): `Gopher-*-arm64.dmg`
+          - **Intel**: `Gopher-*-x86_64.dmg`
+
+          Open the disk image and drag **Gopher** onto **Applications**.
+
+          If macOS says it cannot check the application for malicious software,
+          the build was not signed with a Developer ID. Open **System Settings ›
+          Privacy & Security** and choose **Open Anyway**, or run:
+
+              xattr -dr com.apple.quarantine /Applications/Gopher.app
+          NOTES
+          gh release create "$GITHUB_REF_NAME" dist/*.dmg \
+            --title "Gopher $GITHUB_REF_NAME" --notes-file notes.md
