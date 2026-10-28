@@ -456,9 +456,58 @@ how a script checks that the bundle starts."
          (let ((seconds (ignore-errors (parse-integer value))))
            (and seconds (plusp seconds) seconds)))))
 
+(sb-alien:define-alien-type nil
+    (sb-alien:struct cg-rect
+      (x double-float) (y double-float) (width double-float) (height double-float)))
+
+(defun capture-window-image (window-number)
+  "The window WINDOW-NUMBER as it is on screen, a CGImageRef the caller
+releases, or NIL.  A process may capture its own windows without asking for
+Screen Recording, so this gets the real thing -- toolbar, tab bar and their
+translucent materials -- where drawing the window offscreen cannot.  The
+rectangle goes by value, which SB-ALIEN does and CFFI cannot."
+  (sb-alien:with-alien ((bounds (sb-alien:struct cg-rect)))
+    ;; CGRectNull: the smallest rectangle holding the window.
+    (setf (sb-alien:slot bounds 'x) sb-ext:double-float-positive-infinity
+          (sb-alien:slot bounds 'y) sb-ext:double-float-positive-infinity
+          (sb-alien:slot bounds 'width) 0d0
+          (sb-alien:slot bounds 'height) 0d0)
+    (let ((image (sb-int:with-float-traps-masked (:invalid :divide-by-zero :overflow :inexact)
+                   (sb-alien:alien-funcall
+                    (sb-alien:extern-alien "CGWindowListCreateImage"
+                                           (function sb-sys:system-area-pointer
+                                                     (sb-alien:struct cg-rect)
+                                                     (sb-alien:unsigned 32)
+                                                     (sb-alien:unsigned 32)
+                                                     (sb-alien:unsigned 32)))
+                    bounds
+                    8                   ; kCGWindowListOptionIncludingWindow
+                    window-number
+                    ;; kCGWindowImageBoundsIgnoreFraming | kCGWindowImageBestResolution
+                    9))))
+      (if (zerop (sb-sys:sap-int image)) nil (cffi:make-pointer (sb-sys:sap-int image))))))
+
+(defun write-png (rep path)
+  (objc:invoke-bool (objc:invoke rep "representationUsingType:properties:" 4
+                                 (objc:invoke "NSDictionary" "dictionary"))
+                    "writeToFile:atomically:" path t))
+
 (defun snapshot-window (controller path)
-  "Write what CONTROLLER's window shows to PATH as a PNG: the whole window,
-its title bar and tab bar too, as drawn by the window's frame view."
+  "Write what CONTROLLER's window shows to PATH as a PNG: the window as it is
+on screen if it can be captured, or else as its frame view draws it
+offscreen (where toolbar items and the selected tab come out blank)."
+  (let ((image (ignore-errors
+                (capture-window-image
+                 (objc:invoke (controller-window controller) "windowNumber")))))
+    (if image
+        (let ((rep (objc:autorelease
+                    (objc:invoke (objc:invoke "NSBitmapImageRep" "alloc") "initWithCGImage:" image))))
+          (cffi:foreign-funcall "CGImageRelease" :pointer image :void)
+          (note "self test: captured the window from the screen")
+          (write-png rep path))
+        (snapshot-window-offscreen controller path))))
+
+(defun snapshot-window-offscreen (controller path)
   (let* ((view (objc:invoke (objc:invoke (controller-window controller) "contentView")
                             "superview"))
          (bounds (objc:invoke view "bounds"))

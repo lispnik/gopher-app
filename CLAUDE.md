@@ -76,10 +76,12 @@ To run one test from a REPL with that registry:
   they exist for windows never shown; `controller-back-button` and friends
   are NSToolbarItems, with `setAutovalidates: NO` so `refresh-controls`
   decides what is enabled.
-- An offscreen snapshot (`cacheDisplayInRect:`) draws toolbar items and the
-  selected tab as blank white shapes: it cannot render their materials.
-  Screenshots of those need `screencapture -l`, which needs Screen Recording
-  permission for whatever runs it.
+- The self test's snapshot captures the window from the screen with
+  `CGWindowListCreateImage`: a process may capture its own windows without
+  Screen Recording permission (`screencapture -l` from a shell may not). The
+  rectangle is passed by value with SB-ALIEN, which CFFI cannot do. If that
+  fails it draws the window offscreen (`cacheDisplayInRect:`), where toolbar
+  items and the selected tab come out as blank white shapes.
 - Tabs are macOS window tabs (`tabbingIdentifier` "GopherBrowser"); a tab is a
   window with its own controller. `current-session-groups` reads them back
   through `tabGroup` for `session.sexp`.

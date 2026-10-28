@@ -10,7 +10,7 @@ which does the protocols. It is built with SBCL,
 [asdf-macos-app](https://github.com/lispnik/asdf-macos-app) for the bundle,
 FiveAM for the tests and ocicl for the dependencies.
 
-![A Gopher menu: quux.org, its items marked DIR+ and TXT+ as Gopher+ items](doc/screenshots/gopher-menu.png)
+![Gopher showing quux.org's Gopher menu, with Project Gemini and Floodgap in two more tabs](doc/screenshots/gopher-menu.png)
 
 ## Screenshots
 
@@ -19,12 +19,13 @@ FiveAM for the tests and ocicl for the dependencies.
 | ![Project Gemini's home page](doc/screenshots/gemini-page.png) | ![Veronica-2 results for lisp](doc/screenshots/veronica-search.png) |
 | A Gemini page: headings, prose in a column of reading width, links. The status line says it came over TLS. | A Veronica-2 search for *lisp*, kept at an address with the search in it, so Back and Reload repeat it. |
 
-Above: quux.org's Gopher menu. The item types are in a column of their own,
-`+` marking Gopher+ items, whose information and views are a right-click
-away.
+Above: quux.org's Gopher menu, with two more tabs open under the toolbar.
+The item types are in a column of their own, `+` marking Gopher+ items, whose
+information and views are a right-click away.
 
 The screenshots are the browser's own: `GOPHER_BROWSER_SNAPSHOT` (see
-*Checking the bundle from a script*) has it draw its window into a PNG.
+*Checking the bundle from a script*) has it capture its window from the
+screen into a PNG.
 
 ## What it does
 
