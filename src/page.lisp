@@ -147,11 +147,18 @@ order: what a window that is already showing PAGE must append."
     (nreverse new)))
 
 (defun url-title (url)
-  "A title for a page with nothing better: the host and path, as typed."
-  (handler-case (let ((parsed (g:parse-url url)))
-                  (format nil "~a~a" (g:url-display-host parsed)
-                          (let ((path (or (g:url-path parsed) "")))
-                            (if (member path '("" "/") :test #'string=) "" path))))
+  "A title for a page with nothing better: the host and path, as typed, or for
+search results, the search and the host."
+  (handler-case
+      (let* ((parsed (g:parse-url url))
+             (search (and (member (g:url-scheme parsed) '("gopher" "gophers")
+                                  :test #'string-equal)
+                          (ignore-errors (g:url-gopher-search parsed)))))
+        (if (and search (plusp (length search)))
+            (format nil "“~a” on ~a" search (g:url-display-host parsed))
+            (format nil "~a~a" (g:url-display-host parsed)
+                    (let ((path (or (g:url-path parsed) "")))
+                      (if (member path '("" "/") :test #'string=) "" path)))))
     (error () url)))
 
 (defun document-page (document url)

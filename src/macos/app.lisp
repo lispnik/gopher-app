@@ -457,8 +457,10 @@ how a script checks that the bundle starts."
            (and seconds (plusp seconds) seconds)))))
 
 (defun snapshot-window (controller path)
-  "Write what CONTROLLER's window shows to PATH as a PNG."
-  (let* ((view (objc:invoke (controller-window controller) "contentView"))
+  "Write what CONTROLLER's window shows to PATH as a PNG: the whole window,
+its title bar and tab bar too, as drawn by the window's frame view."
+  (let* ((view (objc:invoke (objc:invoke (controller-window controller) "contentView")
+                            "superview"))
          (bounds (objc:invoke view "bounds"))
          (rep (objc:invoke view "bitmapImageRepForCachingDisplayInRect:" bounds)))
     (objc:invoke view "cacheDisplayInRect:toBitmapImageRep:" bounds rep)
@@ -468,9 +470,21 @@ how a script checks that the bundle starts."
 
 ;;; The self test's last act: GOPHER_BROWSER_SNAPSHOT names a PNG to write the
 ;;; front window to, so that a script can see what the bundle drew.
+(defun front-controller ()
+  "The controller of the frontmost browser window, or of the newest."
+  (or (loop for window in (ns-array-list (objc:invoke (objc.runloop:shared-application)
+                                                      "orderedWindows"))
+            for controller = (controller-for-window window)
+            when controller return controller)
+      (first *controllers*)))
+
 (define-delegate-method ("gbSelfTestSnapshot:" :void) ((argument objc:objc-object-pointer))
   ;; What the window shows, for a script to check that a page arrived.
-  (let ((controller (first *controllers*)))
+  (let ((controller (front-controller)))
+    (when controller
+      (note "self test: front window number ~d"
+            (objc:invoke (controller-window controller) "windowNumber"))))
+  (let ((controller (front-controller)))
     (when controller
       (let ((page (controller-page controller)))
         (note "self test: showing ~a: ~a (~d links)"
@@ -480,7 +494,7 @@ how a script checks that the bundle starts."
   (let ((path (uiop:getenv "GOPHER_BROWSER_SNAPSHOT")))
     (when (and path (plusp (length path)) *controllers*)
       (note "self test: snapshot ~:[failed~;written~] to ~a"
-            (snapshot-window (first *controllers*) path) path))))
+            (snapshot-window (front-controller) path) path))))
 
 (defun start-application ()
   "Everything MAIN does before the event loop: AppKit, the menus, the delegate."
@@ -511,6 +525,10 @@ how a script checks that the bundle starts."
                 (open-window))))
         (objc:invoke (objc.runloop:shared-application) "activateIgnoringOtherApps:" t)
         (note "ready")
+        (let ((front (front-controller)))
+          (when front
+            (note "front window number ~d"
+                  (objc:invoke (controller-window front) "windowNumber"))))
         (let ((seconds (self-test-seconds)))
           (when seconds
             (note "self test: quitting in ~d seconds" seconds)

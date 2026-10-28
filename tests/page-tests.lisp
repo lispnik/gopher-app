@@ -84,7 +84,9 @@
 
 (test titles-fall-back-to-the-address
   (is (string= "example.org/1/sub" (gb::url-title "gopher://example.org/1/sub")))
-  (is (string= "example.org" (gb::url-title "gemini://example.org/"))))
+  (is (string= "example.org" (gb::url-title "gemini://example.org/")))
+  (is (string= "“common lisp” on example.org"
+               (gb::url-title "gopher://example.org/7/search%09common%20lisp"))))
 
 (test file-names-for-saving
   (is (string= "file.zip" (gb::suggested-file-name "gemini://h/a/file.zip" "application/zip")))
