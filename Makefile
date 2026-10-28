@@ -18,6 +18,9 @@ SBCL ?= sbcl
 
 # Signing, which is personal: local.mk, never committed.
 -include local.mk
+# Exported: gopher-browser-app.asd reads it from the environment, and the
+# child SBCL that builds the bundle sees only that.
+export MACOS_SIGNING_IDENTITY
 
 GOPHER_DIR ?= ../gopher
 # Optional sibling checkouts that shadow the pinned objc and asdf-macos-app.
