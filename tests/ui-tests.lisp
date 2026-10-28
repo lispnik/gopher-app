@@ -1031,3 +1031,19 @@ two" "red" nil nil "" "") (mapcar #'gb::field-value fields)))
                           (sort (mapcar #'gb::current-url gb::*controllers*) #'string<))))
           (dolist (c gb::*controllers*)
             (objc:invoke (gb::controller-window c) "close")))))))
+
+(test the-controls-are-a-toolbar
+  ;; So that the tab bar goes under them, as in Safari.
+  (with-controller (controller)
+    (let* ((window (gb::controller-window controller))
+           (toolbar (objc:invoke window "toolbar"))
+           (items (gb::ns-array-list (objc:invoke toolbar "items"))))
+      (is (equal '("back" "forward" "reload" "home" "address")
+                 (mapcar (lambda (item) (objc:invoke-into 'string item "itemIdentifier")) items)))
+      (is (cffi:pointer-eq (gb::controller-address-field controller)
+                           (objc:invoke (fifth items) "view")))
+      (is (cffi:pointer-eq (gb::controller-back-button controller) (first items)))
+      ;; NSWindowToolbarStyleUnified.
+      (is (= 3 (objc:invoke window "toolbarStyle")))
+      ;; Back is off with nowhere to go; the controller turns it on.
+      (is (not (enabled-p (gb::controller-back-button controller)))))))

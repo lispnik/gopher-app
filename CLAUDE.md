@@ -69,6 +69,17 @@ To run one test from a REPL with that registry:
   `sendEvent:` sees every event first: mouse buttons 3/4 and swipes become
   Back/Forward, and keys on the page (Tab, Return, digits, Escape) go to
   `page-key`. Anything else goes to `super`.
+- Back, Forward, Reload, Home and the address field are an NSToolbar
+  (`install-toolbar`), unified style, title hidden: macOS then puts the tab
+  bar under the toolbar, as Safari does. The items are made with the window
+  and kept in `controller-toolbar-items` (the delegate hands them over), so
+  they exist for windows never shown; `controller-back-button` and friends
+  are NSToolbarItems, with `setAutovalidates: NO` so `refresh-controls`
+  decides what is enabled.
+- An offscreen snapshot (`cacheDisplayInRect:`) draws toolbar items and the
+  selected tab as blank white shapes: it cannot render their materials.
+  Screenshots of those need `screencapture -l`, which needs Screen Recording
+  permission for whatever runs it.
 - Tabs are macOS window tabs (`tabbingIdentifier` "GopherBrowser"); a tab is a
   window with its own controller. `current-session-groups` reads them back
   through `tabGroup` for `session.sexp`.

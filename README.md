@@ -33,7 +33,8 @@ The screenshots are the browser's own: `GOPHER_BROWSER_SNAPSHOT` (see
   gets headings, lists, quotes and preformatted blocks. Pages are drawn as
   their lines arrive, in a centred column of comfortable width.
 - **Tabs and windows.** ⌘T opens a tab, ⌘N a window; ⌘-click opens a link in
-  a background tab. They are macOS's own tabs: the tab bar, Show All Tabs and
+  a background tab. Back, Forward, Reload, Home and the address are the
+  window's toolbar, with the tab bar under it. They are macOS's own tabs: the tab bar, Show All Tabs and
   Merge All Windows all work. The windows and tabs open when you quit come
   back when you start again, where they were.
 - **Following links.** Click, or Tab and Shift-Tab to move from link to link

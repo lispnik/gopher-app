@@ -45,6 +45,8 @@
    (completion :initform nil :accessor controller-completion
                :documentation "(TEXT . URL): the address field's completion, and where it leads.")
    (closed :initform nil :accessor controller-closed-p)
+   (toolbar-items :initform '() :accessor controller-toolbar-items
+                  :documentation "Toolbar identifier -> its NSToolbarItem, made with the window.")
    (typed-length :initform 0 :accessor controller-typed-length
                  :documentation "How long the address field's text was, to tell typing from deleting."))
   (:objc-class-name "GopherBrowserWindowController"))
@@ -1085,21 +1087,107 @@ Only when the system says swipes between pages are made by scrolling."
                             name description)))
     (if (null-object-p image) (cffi:null-pointer) image)))
 
-(defun add-tool-button (content symbol description action frame target)
-  (let ((button (objc:invoke "NSButton" "buttonWithImage:target:action:"
-                             (symbol-image symbol description) target
-                             (objc:coerce-to-selector action))))
-    (objc:invoke button "setFrame:" frame)
-    (objc:invoke button "setAutoresizingMask:" +flexible-bottom+)
-    ;; NSBezelStyleTexturedRounded, the toolbar look.
-    (objc:invoke button "setBezelStyle:" 11)
-    (objc:invoke button "setToolTip:" description)
-    (objc:invoke content "addSubview:" button)
-    button))
+;;; The toolbar ----------------------------------------------------------------------------
+;;;
+;;; Back, Forward, Reload, Home and the address are a real NSToolbar, so the
+;;; window has one unified bar along its top and macOS puts its tab bar under
+;;; it, as Safari and Finder do.  The items are made with the window and kept by
+;;; the controller -- they exist before the window is ever shown, which the
+;;; tests rely on -- and the toolbar's delegate (the controller) hands them over
+;;; when the toolbar asks.
+
+(defparameter +toolbar-identifiers+ '("back" "forward" "reload" "home" "address"))
+
+(defun make-toolbar-button (identifier symbol label action target)
+  "A toolbar item that is a button showing SF Symbol SYMBOL."
+  (let ((item (objc:invoke (objc:invoke "NSToolbarItem" "alloc") "initWithItemIdentifier:"
+                           identifier)))
+    (objc:invoke item "setImage:" (symbol-image symbol label))
+    (objc:invoke item "setLabel:" label)
+    (objc:invoke item "setToolTip:" label)
+    (objc:invoke item "setTarget:" target)
+    (objc:invoke item "setAction:" (objc:coerce-to-selector action))
+    (objc:invoke item "setBordered:" t)
+    ;; Enabled as REFRESH-CONTROLS says, not as AppKit guesses.
+    (objc:invoke item "setAutovalidates:" nil)
+    ;; Back and Forward go at the leading edge, where macOS keeps navigation.
+    (when (and (member identifier '("back" "forward") :test #'string=)
+               (objc:can-invoke-p item "setNavigational:"))
+      (objc:invoke item "setNavigational:" t))
+    item))
+
+(defun make-address-field (target)
+  (let ((field (objc:invoke (objc:invoke "NSTextField" "alloc") "initWithFrame:"
+                            #(0d0 0d0 480d0 24d0))))
+    (objc:invoke field "setPlaceholderString:" "Address: gopher://, gemini://, spartan://, nex://, finger://")
+    (objc:invoke field "setTarget:" target)
+    (objc:invoke field "setAction:" (objc:coerce-to-selector "go:"))
+    ;; For completing addresses as they are typed.
+    (objc:invoke field "setDelegate:" target)
+    (objc:invoke (objc:invoke field "cell") "setScrollable:" t)
+    (objc:autorelease field)))
+
+(defun make-toolbar-items (controller target)
+  "The toolbar's items, kept on CONTROLLER, and its buttons and field set
+where the rest of the controller looks for them."
+  (let* ((back (make-toolbar-button "back" "chevron.left" "Back" "goBack:" target))
+         (forward (make-toolbar-button "forward" "chevron.right" "Forward" "goForward:" target))
+         (reload (make-toolbar-button "reload" "arrow.clockwise" "Reload" "reload:" target))
+         (home (make-toolbar-button "home" "house" "Home" "goHome:" target))
+         (field (make-address-field target))
+         (address (objc:invoke (objc:invoke "NSToolbarItem" "alloc") "initWithItemIdentifier:"
+                               "address")))
+    (objc:invoke address "setView:" field)
+    (objc:invoke address "setLabel:" "Address")
+    ;; As wide as the toolbar lets it be.
+    (objc:invoke address "setMinSize:" #(240d0 24d0))
+    (objc:invoke address "setMaxSize:" #(4000d0 24d0))
+    (objc:invoke address "setVisibilityPriority:" 1000)
+    (setf (controller-back-button controller) back
+          (controller-forward-button controller) forward
+          (controller-reload-button controller) reload
+          (controller-address-field controller) field
+          (controller-toolbar-items controller)
+          (list (cons "back" back) (cons "forward" forward) (cons "reload" reload)
+                (cons "home" home) (cons "address" address)))))
+
+(defun identifier-array ()
+  (objc:invoke "NSArray" "arrayWithArray:" (coerce +toolbar-identifiers+ 'vector)))
+
+(define-controller-method ("toolbar:itemForItemIdentifier:willBeInsertedIntoToolbar:"
+                           objc:objc-object-pointer :on-error (cffi:null-pointer))
+    ((toolbar objc:objc-object-pointer) (identifier objc:objc-object-pointer)
+     (inserted objc:objc-bool))
+  (or (cdr (assoc (ns-string identifier) (controller-toolbar-items self) :test #'equal))
+      (cffi:null-pointer)))
+
+(define-controller-method ("toolbarDefaultItemIdentifiers:" objc:objc-object-pointer
+                           :on-error (cffi:null-pointer))
+    ((toolbar objc:objc-object-pointer))
+  (identifier-array))
+
+(define-controller-method ("toolbarAllowedItemIdentifiers:" objc:objc-object-pointer
+                           :on-error (cffi:null-pointer))
+    ((toolbar objc:objc-object-pointer))
+  (identifier-array))
+
+(defun install-toolbar (controller window target)
+  (make-toolbar-items controller target)
+  (let ((toolbar (objc:invoke (objc:invoke "NSToolbar" "alloc") "initWithIdentifier:"
+                              "GopherBrowserToolbar")))
+    (objc:invoke toolbar "setDelegate:" target)
+    ;; NSToolbarDisplayModeIconOnly: the address field and four icons.
+    (objc:invoke toolbar "setDisplayMode:" 2)
+    (objc:invoke toolbar "setAllowsUserCustomization:" nil)
+    (objc:invoke window "setToolbar:" toolbar)
+    (objc:release toolbar))
+  ;; NSWindowToolbarStyleUnified, with the title in the tab bar and the
+  ;; Window menu rather than taking the toolbar's room, as Safari does.
+  (objc:invoke window "setToolbarStyle:" 3)
+  (objc:invoke window "setTitleVisibility:" 1))
 
 (defparameter +window-width+ 860d0)
 (defparameter +window-height+ 720d0)
-(defparameter +bar-height+ 44d0)
 (defparameter +status-height+ 26d0)
 
 (defvar *cascade-point* nil
@@ -1127,35 +1215,13 @@ Only when the system says swipes between pages are made by scrolling."
     (setf (window-controller (objc:objc-object-from-pointer window)) controller)
     (setf (controller-window controller) window)
 
-    ;; The bar along the top: Back, Forward, Reload, Home, and the address.
-    (let ((y (- height 36d0)))
-      (setf (controller-back-button controller)
-            (add-tool-button content "chevron.left" "Back" "goBack:"
-                             (vector 10d0 y 34d0 28d0) target)
-            (controller-forward-button controller)
-            (add-tool-button content "chevron.right" "Forward" "goForward:"
-                             (vector 46d0 y 34d0 28d0) target)
-            (controller-reload-button controller)
-            (add-tool-button content "arrow.clockwise" "Reload" "reload:"
-                             (vector 86d0 y 34d0 28d0) target))
-      (add-tool-button content "house" "Home" "goHome:" (vector 122d0 y 34d0 28d0) target)
-      (let ((field (objc:invoke (objc:invoke "NSTextField" "alloc") "initWithFrame:"
-                                (vector 166d0 (+ y 2d0) (- width 178d0) 24d0))))
-        (objc:invoke field "setAutoresizingMask:" (logior +flexible-width+ +flexible-bottom+))
-        (objc:invoke field "setPlaceholderString:" "Address: gopher://, gemini://, spartan://, nex://, finger://")
-        (objc:invoke field "setTarget:" target)
-        (objc:invoke field "setAction:" (objc:coerce-to-selector "go:"))
-        ;; For completing addresses as they are typed.
-        (objc:invoke field "setDelegate:" target)
-        (objc:invoke (objc:invoke field "cell") "setScrollable:" t)
-        (objc:invoke content "addSubview:" field)
-        (objc:release field)
-        (setf (controller-address-field controller) field)))
+    ;; The toolbar along the top: Back, Forward, Reload, Home, and the address.
+    (install-toolbar controller window target)
 
-    ;; The page, between the bar and the status line.
+    ;; The page, from the toolbar down to the status line.
     (let ((scroll (objc:invoke "NSTextView" "scrollableTextView")))
       (objc:invoke scroll "setFrame:" (vector 0d0 +status-height+ width
-                                              (- height +bar-height+ +status-height+)))
+                                              (- height +status-height+)))
       (objc:invoke scroll "setAutoresizingMask:" (logior +flexible-width+ +flexible-height+))
       (objc:invoke scroll "setBorderType:" 0)
       (let ((text-view (objc:invoke scroll "documentView")))
