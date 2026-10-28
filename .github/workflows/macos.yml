@@ -1,6 +1,11 @@
 # Build a safepoint SBCL, run the suite, build the bundle, check it from its
-# disk image, and keep the disk image -- on Apple silicon and on Intel.  A tag
-# v<version> makes a release of the two disk images.
+# disk image, and keep the disk image -- on Apple silicon.  A tag v<version>
+# makes a release of the disk image.
+#
+# NO INTEL, FOR NOW.  The Intel runner hung in the test suite (2026-10-28) and
+# never reached its timeout's kill: perl's alarm stops make, not the SBCL under
+# it.  To bring Intel back, add the macos-26-intel row to the matrix and the
+# second disk image to the release, and find the test that hangs there.
 #
 # THE LIBRARY.  The gopher library is not in ocicl: it is checked out from
 # lispnik/gopher into ./gopher, and GOPHER_DIR points the Makefile at it.
@@ -48,8 +53,6 @@ jobs:
         include:
           - os: macos-latest
             arch: arm64
-          - os: macos-26-intel
-            arch: x86-64
 
     steps:
       - name: Check out
@@ -209,14 +212,14 @@ jobs:
           if-no-files-found: ignore
 
   release:
-    name: Release the disk images
+    name: Release the disk image
     needs: test
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Fetch the disk images
+      - name: Fetch the disk image
         uses: actions/download-artifact@v8
         with:
           pattern: dmg-*
@@ -230,13 +233,12 @@ jobs:
         run: |
           set -eux
           ls -l dist
-          test "$(ls dist/*.dmg | wc -l)" -eq 2
+          test "$(ls dist/*.dmg | wc -l)" -eq 1
           cat > notes.md <<'NOTES'
           Gopher, a browser for Gopher, Gemini and the small web, for macOS.
           Built by CI from this tag.
 
-          - **Apple silicon** (M1 and later): `Gopher-*-arm64.dmg`
-          - **Intel**: `Gopher-*-x86_64.dmg`
+          For Macs with Apple silicon (M1 and later): `Gopher-*-arm64.dmg`.
 
           Open the disk image and drag **Gopher** onto **Applications**.
 

@@ -102,16 +102,19 @@ somewhere else.
 
 ## Downloading
 
-Each release has two disk images, built and checked by CI: `-arm64` for Apple
-silicon and `-x86_64` for Intel. Open the one for your Mac and drag Gopher
-onto Applications. Builds are signed ad hoc unless the repository has a
-Developer ID set up (the secrets are listed at the top of
-`.github/workflows/macos.yml`), so the first time, macOS asks: choose Open
-Anyway in System Settings › Privacy & Security.
+Each release has a disk image for Macs with Apple silicon, built, checked,
+signed with a Developer ID and notarised by CI. Open it and drag Gopher onto
+Applications. (There is no Intel build for now; `make dmg` on an Intel Mac
+makes one.)
+
+CI signs with the six secrets listed at the top of
+`.github/workflows/macos.yml`; `tools/set-github-secrets.sh` sets them. A
+build without them is signed ad hoc, and macOS asks before opening it the
+first time: choose Open Anyway in System Settings › Privacy & Security.
 
 A release is made by pushing a tag `v` followed by the version in
 `gopher-browser-app.asd`, for example `v0.1.0`; CI refuses a tag that does not
-match. Every other push keeps the two disk images as the run's artifacts.
+match. Every other push keeps the disk image as the run's artifact.
 
 ## Building
 
