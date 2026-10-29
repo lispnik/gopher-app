@@ -1007,11 +1007,12 @@ where a negative one is a swipe to the right: back."
                ((eql button +forward-button+) :forward)))
         ((= type +ns-event-type-other-mouse-up+)
          (and (member button (list +back-button+ +forward-button+)) :ignore))
-        ;; A three-finger swipe.  deltaX is positive for a swipe to the left
-        ;; (Apple's own example reads it so); fingers moving right go back.
+        ;; A three-finger swipe, or what mouse software (Logitech Options+)
+        ;; sends for its Back and Forward buttons.  A positive deltaX is Back,
+        ;; as in Chromium and Firefox.
         ((= type +ns-event-type-swipe+)
-         (cond ((minusp delta-x) :back)
-               ((plusp delta-x) :forward)))))
+         (cond ((plusp delta-x) :back)
+               ((minusp delta-x) :forward)))))
 
 (defun event-action (event)
   "EVENT-NAVIGATION for an NSEvent.  Asks the event only what its type has:

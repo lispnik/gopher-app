@@ -302,8 +302,8 @@
   (is (null (gb::event-navigation 25 2 0)))
   (is (null (gb::event-navigation 26 2 0)))
   ;; deltaX is positive for a swipe to the left: fingers moving right, back.
-  (is (eq :back (gb::event-navigation 31 0 -1d0)))
-  (is (eq :forward (gb::event-navigation 31 0 1d0)))
+  (is (eq :back (gb::event-navigation 31 0 1d0)))
+  (is (eq :forward (gb::event-navigation 31 0 -1d0)))
   (is (null (gb::event-navigation 31 0 0d0)))
   ;; A left click, a key press.
   (is (null (gb::event-navigation 1 0 0)))
@@ -781,7 +781,7 @@ one: a CGEvent, whose button number can be set, as an NSEvent's cannot."
                (when (eq kind :settings)
                  (setf offered (mapcar #'gb::field-initial fields))
                  (list "gopher://home.example/" "Veronica-2" t "45"
-                       "socks5://127.0.0.1:9050" nil nil)))))
+                       "socks5://127.0.0.1:9050" nil nil t)))))
       (is-true (gb::edit-settings))
       ;; What was offered: what was set before.
       (is (equal '("about:start" "Kennedy" nil "30" "") (subseq offered 0 5)))
@@ -1047,3 +1047,16 @@ two" "red" nil nil "" "") (mapcar #'gb::field-value fields)))
       (is (= 3 (objc:invoke window "toolbarStyle")))
       ;; Back is off with nowhere to go; the controller turns it on.
       (is (not (enabled-p (gb::controller-back-button controller)))))))
+
+(test becoming-the-default-only-ever-as-the-app
+  ;; In the tests (and from source) the running program is not Gopher.app,
+  ;; so asking to be the default must do nothing at all.
+  (with-controller (controller)
+    (is (null (gb::own-bundle-url)))
+    (is (not (gb::default-for-links-p)))
+    (is (null (gb::make-default-for-links)))
+    (is (equal '("gopher" "gophers" "gemini" "spartan" "nex" "guppy" "finger")
+               gb::+handled-schemes+))
+    ;; The checkbox is the form's last row, offered unticked here.
+    (is (eq :check (gb::field-kind (car (last (gb::settings-fields))))))
+    (is (null (gb::field-initial (car (last (gb::settings-fields))))))))

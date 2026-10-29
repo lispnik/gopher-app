@@ -123,6 +123,50 @@
 (defun search-engine-name (key)
   (second (assoc key +search-engines+)))
 
+;;; Being the default for small-web links ----------------------------------------------------
+
+(defparameter +handled-schemes+ '("gopher" "gophers" "gemini" "spartan" "nex" "guppy" "finger")
+  "The URL schemes the bundle declares (gopher-browser-app.asd), and that
+Settings can make Gopher the default for.")
+
+(defparameter +bundle-identifier+ "org.lispnik.gopher-browser")
+
+(defun own-bundle-url ()
+  "The NSURL of the running Gopher.app, or NIL when this is not it -- run from
+source, or in the tests -- so that nothing else is ever made a default."
+  (let ((bundle (objc:invoke "NSBundle" "mainBundle")))
+    (and (equal +bundle-identifier+ (ns-string (objc:invoke bundle "bundleIdentifier")))
+         (objc:invoke bundle "bundleURL"))))
+
+(defun scheme-handler-path (scheme)
+  "The path of the application macOS opens SCHEME: links with, or NIL."
+  (let ((url (objc:invoke (objc:invoke "NSWorkspace" "sharedWorkspace")
+                          "URLForApplicationToOpenURL:"
+                          (objc:invoke "NSURL" "URLWithString:"
+                                       (format nil "~a://example.org/" scheme)))))
+    (and (not (null-object-p url)) (objc:invoke-into 'string url "path"))))
+
+(defun default-for-links-p ()
+  "Whether every scheme in +HANDLED-SCHEMES+ opens in this Gopher.app."
+  (let ((own (own-bundle-url)))
+    (and own
+         (let ((path (objc:invoke-into 'string own "path")))
+           (every (lambda (scheme) (equal path (scheme-handler-path scheme)))
+                  +handled-schemes+)))))
+
+(defun make-default-for-links ()
+  "Ask macOS to open every scheme in +HANDLED-SCHEMES+ with this Gopher.app.
+Answers NIL, doing nothing, when not running as the bundle.  macOS may ask
+the person to confirm."
+  (let ((own (own-bundle-url)))
+    (when own
+      (let ((workspace (objc:invoke "NSWorkspace" "sharedWorkspace")))
+        (dolist (scheme +handled-schemes+)
+          (objc:invoke workspace "setDefaultApplicationAtURL:toOpenURLsWithScheme:completionHandler:"
+                       own scheme (cffi:null-pointer))))
+      (note "asked to be the default for ~{~a~^, ~} links" +handled-schemes+)
+      t)))
+
 (defun settings-fields ()
   "The Settings window's rows, in order, filled in with what is set now."
   (list (make-field :text "Home page (New Window and Home go here)" :value (home-page)
@@ -140,12 +184,14 @@
                     :placeholder "socks5://127.0.0.1:9050 for Tor")
         (make-field :note "Guppy runs over UDP, which a SOCKS5 proxy cannot carry: with a proxy set, guppy:// addresses are refused rather than sent around it.")
         (make-field :check "Try TLS first on gopher:// servers, and fall back to plain Gopher"
-                    :value (gopher-tls-p))))
+                    :value (gopher-tls-p))
+        (make-field :check "Open gopher://, gemini:// and other small-web links from other apps in Gopher"
+                    :value (default-for-links-p))))
 
 (defun apply-settings (values)
   "Keep the Settings window's VALUES.  Signals an error, and keeps nothing,
 if the timeout or the proxy is not one."
-  (destructuring-bind (home engine numbers timeout proxy note tls) values
+  (destructuring-bind (home engine numbers timeout proxy note tls &optional default) values
     (declare (ignore note))
     ;; Checked before anything is kept, so a bad one changes nothing.
     (let ((seconds (ignore-errors (parse-integer (string-trim " " timeout)))))
@@ -169,6 +215,10 @@ if the timeout or the proxy is not one."
         (clear-shared-cache))
       (unless (eq before-numbers (link-numbers-p))
         (redraw-all-pages))
+      ;; Ticked: become the default.  Unticked: leave macOS as it is --
+      ;; there is no saying which other application should have them.
+      (when (and default (not (default-for-links-p)))
+        (make-default-for-links))
       t)))
 
 (defun edit-settings ()

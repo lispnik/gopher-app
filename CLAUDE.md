@@ -113,7 +113,9 @@ To run one test from a REPL with that registry:
   window's `swipe-tracker` (swipe.lisp, pure) watches them pass and decides
   on the gesture's end. Fingers moving right = Back, whichever way the
   scroll-direction setting turns the deltas (`isDirectionInvertedFromDevice`).
-  A three-finger NSEventTypeSwipe has deltaX > 0 for a swipe to the left.
+  A three-finger NSEventTypeSwipe with deltaX > 0 is Back (as in Chromium and
+  Firefox). Logitech Options+ sends one for its mouse Back/Forward buttons, so
+  the sign reversed is the side buttons reversed: a reported bug.
 - Gopher+ files: ChooseF sends the file after the answers (the library's
   `:gopher-plus-file`, a counted `+N` block); AskF names a local file the reply
   is saved to. Both send only the file's name as their answer line.
